@@ -14,3 +14,5 @@ sp-std = { git = "https://github.com/Allfeat/polkadot-sdk.git", branch = "allfea
 ac-primitives = { version = "0.9" }
 clap = { version = "4.5.4", features = ["derive"] }
 hex = "0.4.3"
+subxt = "0.37"
+tokio = { version = "1.0", features = ["full"] }

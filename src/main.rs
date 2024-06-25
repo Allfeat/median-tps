@@ -1,7 +1,6 @@
-use ac_primitives::DefaultRuntimeConfig;
 use clap::Parser;
-use sp_core::H256;
-use substrate_api_client::{rpc::WsRpcClient, Api, GetChainInfo, GetStorage};
+use std::collections::VecDeque;
+use subxt::{PolkadotConfig};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -12,50 +11,57 @@ struct Args {
     network: String,
 
     // Define the number of blocks to analyze
-    #[arg(long, default_value_t = 1000)]
-    num_blocks: u32,
+    #[arg(long, default_value_t = 10)]
+    num_blocks: usize,
 }
 
-fn main() {
+#[subxt::subxt(runtime_metadata_path = "metadata.scale")]
+pub mod harmonie {}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Define the endpoint URL
     let args = Args::parse();
     let url = match args.network.as_str() {
-        "harmonie" => "wss://harmonie-endpoint-02.allfeat.io",
+        "harmonie-testnet" => "wss://harmonie-endpoint-02.allfeat.io",
         _ => &args.network,
     };
 
-    let client = WsRpcClient::new(url).unwrap();
-    let api = Api::<DefaultRuntimeConfig, _>::new(client).unwrap();
+    // Build the client
+    let client = subxt::client::OnlineClient::<PolkadotConfig>::from_url(url).await?;
+    println!("Connection with {url} established.");
+
+    let block_client = client.blocks();
+    let mut block_stream = block_client.subscribe_finalized().await?;
 
     // Define the number of blocks to analyze
-    let num_blocks: u32 = args.num_blocks;
+    let num_blocks = args.num_blocks;
+    let mut timestamps = VecDeque::with_capacity(num_blocks);
+    let mut tx_counts = VecDeque::with_capacity(num_blocks);
+    let storage_key = "0x26aa394eea5630e07c48ae0c9558cef7".as_bytes();
 
-    // Fetch the latest finalized block number
-    let latest_block_hash = api.get_finalized_head().unwrap().unwrap();
-    let latest_block = api.get_header(Some(latest_block_hash)).unwrap().unwrap();
-    let latest_block_number = latest_block.number;
+    while let Some(block) = block_stream.next().await {
+        let block = block?;
+        println!("New block: {}", block.hash());
 
-    let mut timestamps = vec![];
-    let mut tx_counts = vec![];
+        // Fetch the timestamp from the block
+        if let Some(block_detail) = block.extrinsics().await?.iter().nth(0) {
+            let block_detail = block_detail?;
+            let timestamp = block_detail.;
+            let tx_count = block.extrinsics().await?.len() as u64;
+            timestamps.push_back(timestamp);
+            tx_counts.push_back(tx_count);
 
-    // Loop through the blocks to collect timestamps and transaction counts
-    for i in 0..num_blocks {
-        let block_number = latest_block_number - i;
-        let block_hash = api.get_block_hash(Some(block_number)).unwrap().unwrap();
+            println!(
+                "Block #{}: Timestamp: {}, Extrinsics: {}",
+                block.hash(),
+                timestamp,
+                tx_count
+            );
+        }
 
-        println!(
-            "Fetching block: {} with hash {:?} as block number {}",
-            block_number, block_hash, i
-        );
-        let block = api.get_signed_block(Some(block_hash)).unwrap().unwrap();
-
-        // Extract timestamp and transaction count
-        let timestamp = get_block_timestamp(&api, block_hash);
-        let tx_count = block.block.extrinsics.len() as u32;
-        println!("Block timestamp: {:?}, tx count: {}", timestamp, tx_count);
-
-        if let Some(ts) = timestamp {
-            timestamps.push(ts);
-            tx_counts.push(tx_count);
+        if timestamps.len() >= num_blocks {
+            break;
         }
     }
 
@@ -73,34 +79,8 @@ fn main() {
     } else {
         println!("Not enough data to calculate TPS");
     }
-}
 
-fn get_block_timestamp(
-    api: &Api<DefaultRuntimeConfig, WsRpcClient>,
-    block_hash: H256,
-) -> Option<u64> {
-    let storage_data: Option<Vec<u8>> = api
-        .get_storage_by_key(
-            ac_primitives::StorageKey(
-                "0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb".into(),
-            ),
-            Some(block_hash),
-        )
-        .unwrap();
-
-    println!("Storage data: {:?}", storage_data);
-    if let Some(data) = storage_data {
-        if data.len() >= 8 {
-            let mut arr = [0u8; 8];
-            arr.copy_from_slice(&data[..8]);
-            let timestamp = u64::from_le_bytes(arr);
-            Some(timestamp)
-        } else {
-            None
-        }
-    } else {
-        None
-    }
+    Ok(())
 }
 
 // Function to calculate the median of a vector
