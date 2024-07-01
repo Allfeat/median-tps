@@ -1,6 +1,6 @@
 use clap::Parser;
 use std::collections::VecDeque;
-use subxt::{PolkadotConfig};
+use subxt::PolkadotConfig;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -38,27 +38,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let num_blocks = args.num_blocks;
     let mut timestamps = VecDeque::with_capacity(num_blocks);
     let mut tx_counts = VecDeque::with_capacity(num_blocks);
-    let storage_key = "0x26aa394eea5630e07c48ae0c9558cef7".as_bytes();
 
     while let Some(block) = block_stream.next().await {
         let block = block?;
         println!("New block: {}", block.hash());
 
-        // Fetch the timestamp from the block
-        if let Some(block_detail) = block.extrinsics().await?.iter().nth(0) {
-            let block_detail = block_detail?;
-            let timestamp = block_detail.;
-            let tx_count = block.extrinsics().await?.len() as u64;
-            timestamps.push_back(timestamp);
-            tx_counts.push_back(tx_count);
+        let storage_query = subxt::dynamic::storage("Timestamp", "Now", vec![]);
+        let result = client
+            .storage()
+            .at_latest()
+            .await?
+            .fetch(&storage_query)
+            .await?;
+        let value = result.unwrap().to_value()?;
+        let timestamp = value.as_u128().unwrap();
+        let tx_count = block.extrinsics().await?.len() as u64;
 
-            println!(
-                "Block #{}: Timestamp: {}, Extrinsics: {}",
-                block.hash(),
-                timestamp,
-                tx_count
-            );
-        }
+        timestamps.push_back(timestamp);
+        tx_counts.push_back(tx_count);
+
+        println!(
+            "Block #{:?}: Timestamp: {}, Extrinsics: {}",
+            block.hash(),
+            timestamp,
+            tx_count
+        );
 
         if timestamps.len() >= num_blocks {
             break;
@@ -68,16 +72,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Calculate TPS
     if timestamps.len() > 1 {
         let mut tps_values = vec![];
+
         for i in 1..timestamps.len() {
             let time_diff = (timestamps[i] - timestamps[i - 1]) as f64 / 1000.0;
             let tx_diff = tx_counts[i] as f64;
             let tps = tx_diff / time_diff;
             tps_values.push(tps);
         }
+
         let median_tps = median(&mut tps_values);
-        println!("Median TPS: {:.2}", median_tps);
+        println!("\nMedian TPS: {:.2}", median_tps);
     } else {
-        println!("Not enough data to calculate TPS");
+        println!("\nNot enough data to calculate TPS");
     }
 
     Ok(())
@@ -87,6 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn median(values: &mut [f64]) -> f64 {
     values.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let mid = values.len() / 2;
+
     if values.len() % 2 == 0 {
         (values[mid - 1] + values[mid]) / 2.0
     } else {
