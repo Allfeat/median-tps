@@ -7,7 +7,7 @@ use subxt::PolkadotConfig;
 struct Args {
     /// The network to connect to ( e.g 'harmonie' for the testnet )
     /// You can also provide the full URL of the node.
-    #[arg(short, long, default_value = "harmonie")]
+    #[arg(short, long, default_value = "harmonie-testnet")]
     network: String,
 
     // Define the number of blocks to analyze
